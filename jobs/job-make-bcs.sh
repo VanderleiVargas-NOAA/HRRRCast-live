@@ -2,7 +2,7 @@
 #SBATCH --job-name=make_bcs
 #SBATCH --output=logs/make_bcs_%j.out
 #SBATCH --partition=u1-compute
-#SBATCH --account=@[ACCNR]
+#SBATCH --account=@[CPU_ACCNR]
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=@[LEAD_HOUR]
 #SBATCH --time=@[MAKE_BCS_WALLTIME]

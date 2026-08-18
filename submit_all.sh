@@ -10,9 +10,7 @@ PACKAGEROOT=${5:-`pwd`}
 DATAROOT=${6:-`pwd`}
 RUNPLOT=${7:-"YES"}
 ENVMODE=${8:-``}
-RUNCLEANUP=${9:-"NO"}
 
-ACCNR=${ACCNR:-gsd-hpcs}
 FCST_ACCNR=${FCST_ACCNR:-$ACCNR}
 FCST_QOS=${FCST_QOS:-gpuwf}
 FCST_RESERVATION=${FCST_RESERVATION:-}
@@ -21,22 +19,38 @@ if [ -n "$FCST_RESERVATION" ]; then
     FCST_RESERVATION="--reservation=${FCST_RESERVATION}"
 fi
 
-# set wall clock time limits
 hr=$(echo "$INIT_TIME" | grep -oP '\d{2}$')
-if [[ "$hr" =~ ^(00|06|12|18)$ ]]; then
-    FCST_WALLTIME="02:20:00"
-    PMM_WALLTIME="02:35:00"
-    GET_BCS_WALLTIME="00:30:00"
-    MAKE_BCS_WALLTIME="01:00:00"
-else
-    FCST_WALLTIME="01:00:00"
-    PMM_WALLTIME="01:15:00"
-    GET_BCS_WALLTIME="00:15:00"
-    MAKE_BCS_WALLTIME="00:30:00"
-fi
 
+# ---- proportional walltimes (calibrated from N_ENS=10, LEAD=6, N_GPUS=2) ----
+LEADS=$(( LEAD_HOUR + 1 ))                          # f00..fLEAD
+MPT=$(( (N_ENSEMBLES + N_GPUS - 1) / N_GPUS ))      # members per GPU task (block dist.)
+SAFETY=${SAFETY:-1.5}                               # margin multiplier (time to spare)
+
+secs_to_hms() { local s=$1; printf "%02d:%02d:%02d" $((s/3600)) $(((s%3600)/60)) $((s%60)); }
+# est base_s rate_s units -> ceil((base + rate*units) * SAFETY) seconds
+est() { awk -v b="$1" -v r="$2" -v u="$3" -v k="$SAFETY" 'BEGIN{ printf "%d", (b + r*u)*k + 0.999 }'; }
+
+# rate constants in SECONDS
+FCST_BASE=120;      FCST_PER_STEP=25        # fcst: per (member * lead)
+GETBCS_BASE=60;     GETBCS_PER_LEAD=3       # get_bcs: per lead
+MAKEBCS_BASE=60;    MAKEBCS_PER_LEAD=41     # make_bcs: per lead
+FETCH_BASE=60;      FETCH_PER_LEAD=5        # fetch_data: per lead
+GENENS_BASE=120;    GENENS_PER_LEAD=150     # genensprod: per lead
+GRIDSTAT_BASE=120;  GRIDSTAT_PER_LEAD=200   # gridstat: per lead
+
+FCST_WALLTIME=$(secs_to_hms "$(est $FCST_BASE     $FCST_PER_STEP    $((MPT*LEADS)))")
+GET_BCS_WALLTIME=$(secs_to_hms "$(est $GETBCS_BASE   $GETBCS_PER_LEAD  $LEADS)")
+MAKE_BCS_WALLTIME=$(secs_to_hms "$(est $MAKEBCS_BASE  $MAKEBCS_PER_LEAD $LEADS)")
+FETCH_WALLTIME=$(secs_to_hms "$(est $FETCH_BASE    $FETCH_PER_LEAD   $LEADS)")
+GENENSPROD_WALLTIME=$(secs_to_hms "$(est $GENENS_BASE  $GENENS_PER_LEAD  $LEADS)")
+GRIDSTAT_WALLTIME=$(secs_to_hms "$(est $GRIDSTAT_BASE $GRIDSTAT_PER_LEAD $LEADS)")
+
+# fixed / near-constant jobs
 GET_ICS_WALLTIME="00:10:00"
 MAKE_ICS_WALLTIME="00:10:00"
+CLEAN_WALLTIME="00:10:00"
+CHECK_WALLTIME="00:05:00"
+REPORT_WALLTIME="00:06:00"
 PLOT_WALLTIME="00:30:00"
 
 # set deadline only for near-realtime non-synoptic runs
@@ -53,7 +67,6 @@ fi
 # set environment variables
 PMM_POLL_SECONDS="60"
 PMM_MIN_AGE_SECONDS="90"
-PMM_TIMEOUT_SECONDS="600"
 NETCDF2GRIB_SECTION3=
 WGRIB2="wgrib2"
 
@@ -77,54 +90,82 @@ cd $DATAROOT
 echo "PACKAGEROOT=$PACKAGEROOT,DATAROOT=$DATAROOT"
 
 atparse < $PACKAGEROOT/jobs/job-get-ics.sh > $DATAROOT/logs/job-get-ics.sh
-jobid1=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-get-ics.sh)
+#jobid1=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-get-ics.sh)
 echo "Submitted job: $jobid1"
 
 atparse < $PACKAGEROOT/jobs/job-get-bcs.sh > $DATAROOT/logs/job-get-bcs.sh
-jobid2=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-get-bcs.sh)
+#jobid2=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-get-bcs.sh)
 echo "Submitted job: $jobid2"
 
 atparse < $PACKAGEROOT/jobs/job-make-ics.sh > $DATAROOT/logs/job-make-ics.sh
-jobid3=$(submit_with_check sbatch --dependency=afterok:$jobid1 --parsable $DATAROOT/logs/job-make-ics.sh)
+#jobid3=$(submit_with_check sbatch --dependency=afterok:$jobid1 --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-make-ics.sh)
 echo "Submitted job: $jobid3"
 
 atparse < $PACKAGEROOT/jobs/job-make-bcs.sh > $DATAROOT/logs/job-make-bcs.sh
-jobid4=$(submit_with_check sbatch --dependency=afterok:$jobid2 --parsable $DATAROOT/logs/job-make-bcs.sh)
+#jobid4=$(submit_with_check sbatch --dependency=afterok:$jobid2 --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-make-bcs.sh)
 echo "Submitted job: $jobid4"
 
 # submit forecasts as a job array over GPU slots; member range computed in job-fcst.sh
 atparse < $PACKAGEROOT/jobs/job-fcst.sh > $DATAROOT/logs/job-fcst.sh
-jobid5=$(submit_with_check sbatch --dependency=afterok:$jobid3:$jobid4 --array=0-$((N_GPUS-1)) --wait-all-nodes=1 ${FCST_RESERVATION} --parsable $DATAROOT/logs/job-fcst.sh)
+#jobid5=$(submit_with_check sbatch --dependency=afterok:$jobid3:$jobid4 --kill-on-invalid-dep=yes --array=0-$((N_GPUS-1)) --wait-all-nodes=1 ${FCST_RESERVATION} --parsable $DATAROOT/logs/job-fcst.sh)
 echo "Submitted forecast job array: $jobid5"
-last_jobid=$jobid5
 
-# submit plots as job array
-if [ "$RUNPLOT" == "YES" ]; then
-    atparse < $PACKAGEROOT/jobs/job-plot.sh > $DATAROOT/logs/job-plot.sh
-    jobid6=$(submit_with_check sbatch --dependency=afterok:$jobid5 --array=0-$((N_GPUS-1)) --wait-all-nodes=1 --parsable $DATAROOT/logs/job-plot.sh)
-    echo "Submitted plot job array: $jobid6"
-    last_jobid=$jobid6
-fi
+# clean the run directory once forecasts complete, keeping only final products
+atparse < $PACKAGEROOT/jobs/job-clean.sh > $DATAROOT/logs/job-clean.sh
+#jobid6=$(submit_with_check sbatch --dependency=afterok:$jobid5 --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean.sh)
+echo "Submitted clean job: $jobid6"
 
-# ensemble PMM
-if [ $N_ENSEMBLES -ge 2 ]; then
-    atparse < $PACKAGEROOT/jobs/job-compute-pmm.sh > $DATAROOT/logs/job-compute-pmm.sh
-    jobid7=$(submit_with_check sbatch --dependency=after:$jobid5 --parsable $DATAROOT/logs/job-compute-pmm.sh)
-    echo "Submitted job: $jobid7"
-    last_jobid=$jobid7
+atparse < $PACKAGEROOT/jobs/job-check.sh > $DATAROOT/logs/job-check.sh
+#jobidC=$(submit_with_check sbatch --dependency=afterany:$jobid6 --parsable $DATAROOT/logs/job-check.sh)
+echo "Submitted check job: $jobidC"
 
-    if [ "$RUNPLOT" == "YES" ]; then
-        atparse < $PACKAGEROOT/jobs/job-plot.sh > $DATAROOT/logs/job-plot-pmm.sh
-        jobid8=$(submit_with_check sbatch --dependency=afterok:$jobid7 --parsable $DATAROOT/logs/job-plot-pmm.sh)
-        echo "Submitted job: $jobid8"
-        last_jobid=$jobid8
-    fi
-fi
+atparse < $PACKAGEROOT/jobs/job-fetch-data.sh > $DATAROOT/logs/job-fetch-data.sh
+jobidF=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-fetch-data.sh)
+echo "Submitted fetch job: $jobidF"
 
-# submit cleanup job to run after all jobs complete
-if [ "$RUNCLEANUP" == "YES" ]; then
-    atparse < $PACKAGEROOT/jobs/job-cleanup.sh > $DATAROOT/logs/job-cleanup.sh
-    jobid_cleanup=$(submit_with_check sbatch --dependency=afterany:$last_jobid --parsable $DATAROOT/logs/job-cleanup.sh)
-    echo "Submitted cleanup job: $jobid_cleanup (depends on job $last_jobid)"
-fi
+atparse < $PACKAGEROOT/jobs/job-fetch-ccpa.sh > $DATAROOT/logs/job-fetch-ccpa.sh
+jobidFC=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-fetch-ccpa.sh)
+echo "Submitted CCPA fetch job: $jobidFC"
 
+exit
+# gen_ens_prod: needs a complete run (check OK)
+GENENS_DEP="afterok:$jobidC"
+atparse < $PACKAGEROOT/jobs/job-genensprod.sh > $DATAROOT/logs/job-genensprod.sh
+jobidG=$(submit_with_check sbatch --dependency=$GENENS_DEP --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-genensprod.sh)
+echo "Submitted genensprod job: $jobidG"
+
+# grid_stat: needs gen_ens_prod output AND the fetched obs
+GRIDSTAT_DEP="afterok:$jobidG:$jobidF"
+atparse < $PACKAGEROOT/jobs/job-gridstat.sh > $DATAROOT/logs/job-gridstat.sh
+jobidS=$(submit_with_check sbatch --dependency=$GRIDSTAT_DEP --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-gridstat.sh)
+echo "Submitted gridstat job: $jobidS"
+
+atparse < $PACKAGEROOT/jobs/job-clean-genensprod.sh > $DATAROOT/logs/job-clean-genensprod.sh
+jobidGC=$(submit_with_check sbatch --dependency=afterok:$jobidS --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-genensprod.sh)
+echo "Submitted clean-genensprod job: $jobidGC"
+
+# remove the fetched obs once gridstat is done with them
+atparse < $PACKAGEROOT/jobs/job-clean-obs.sh > $DATAROOT/logs/job-clean-obs.sh
+jobidO=$(submit_with_check sbatch --dependency=afterok:$jobidS --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-obs.sh)
+echo "Submitted clean-obs job: $jobidO"
+
+# remove the remaining HRRRCast forecast output once verification is done
+atparse < $PACKAGEROOT/jobs/job-clean-fcst.sh > $DATAROOT/logs/job-clean-fcst.sh
+jobidP=$(submit_with_check sbatch --dependency=afterok:$jobidS --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-fcst.sh)
+echo "Submitted clean-fcst job: $jobidP"
+
+# ------------------------------------------------------------------
+# disk I/O report — runs after ALL pipeline jobs reach a terminal state
+# ------------------------------------------------------------------
+DATE_STAMP=${INIT_TIME%%T*}; DATE_STAMP=${DATE_STAMP//-/}; HOUR_STAMP=${INIT_TIME#*T}
+JOBIDS_FILE="$DATAROOT/logs/pipeline_jobids_${DATE_STAMP}${HOUR_STAMP}.txt"
+: > "$JOBIDS_FILE"
+for v in "$jobid1" "$jobid2" "$jobid3" "$jobid4" "$jobid5" "$jobid6" \
+         "$jobidC" "$jobidF" "$jobidG" "$jobidS" "$jobidGC" "$jobidO" "$jobidP"; do
+    [[ -n "$v" ]] && echo "$v" >> "$JOBIDS_FILE"
+done
+
+DEP_AFTERANY=$(paste -sd: "$JOBIDS_FILE")
+atparse < $PACKAGEROOT/jobs/job-diskreport.sh > $DATAROOT/logs/job-diskreport.sh
+jobidR=$(submit_with_check sbatch --dependency=afterany:$DEP_AFTERANY --parsable $DATAROOT/logs/job-diskreport.sh)
+echo "Submitted disk report job: $jobidR"
