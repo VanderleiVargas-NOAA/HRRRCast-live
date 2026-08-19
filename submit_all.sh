@@ -90,33 +90,33 @@ cd $DATAROOT
 echo "PACKAGEROOT=$PACKAGEROOT,DATAROOT=$DATAROOT"
 
 atparse < $PACKAGEROOT/jobs/job-get-ics.sh > $DATAROOT/logs/job-get-ics.sh
-#jobid1=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-get-ics.sh)
+jobid1=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-get-ics.sh)
 echo "Submitted job: $jobid1"
 
 atparse < $PACKAGEROOT/jobs/job-get-bcs.sh > $DATAROOT/logs/job-get-bcs.sh
-#jobid2=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-get-bcs.sh)
+jobid2=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-get-bcs.sh)
 echo "Submitted job: $jobid2"
 
 atparse < $PACKAGEROOT/jobs/job-make-ics.sh > $DATAROOT/logs/job-make-ics.sh
-#jobid3=$(submit_with_check sbatch --dependency=afterok:$jobid1 --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-make-ics.sh)
+jobid3=$(submit_with_check sbatch --dependency=afterok:$jobid1 --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-make-ics.sh)
 echo "Submitted job: $jobid3"
 
 atparse < $PACKAGEROOT/jobs/job-make-bcs.sh > $DATAROOT/logs/job-make-bcs.sh
-#jobid4=$(submit_with_check sbatch --dependency=afterok:$jobid2 --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-make-bcs.sh)
+jobid4=$(submit_with_check sbatch --dependency=afterok:$jobid2 --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-make-bcs.sh)
 echo "Submitted job: $jobid4"
 
 # submit forecasts as a job array over GPU slots; member range computed in job-fcst.sh
 atparse < $PACKAGEROOT/jobs/job-fcst.sh > $DATAROOT/logs/job-fcst.sh
-#jobid5=$(submit_with_check sbatch --dependency=afterok:$jobid3:$jobid4 --kill-on-invalid-dep=yes --array=0-$((N_GPUS-1)) --wait-all-nodes=1 ${FCST_RESERVATION} --parsable $DATAROOT/logs/job-fcst.sh)
+jobid5=$(submit_with_check sbatch --dependency=afterok:$jobid3:$jobid4 --kill-on-invalid-dep=yes --array=0-$((N_GPUS-1)) --wait-all-nodes=1 ${FCST_RESERVATION} --parsable $DATAROOT/logs/job-fcst.sh)
 echo "Submitted forecast job array: $jobid5"
 
 # clean the run directory once forecasts complete, keeping only final products
 atparse < $PACKAGEROOT/jobs/job-clean.sh > $DATAROOT/logs/job-clean.sh
-#jobid6=$(submit_with_check sbatch --dependency=afterok:$jobid5 --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean.sh)
+jobid6=$(submit_with_check sbatch --dependency=afterok:$jobid5 --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean.sh)
 echo "Submitted clean job: $jobid6"
 
 atparse < $PACKAGEROOT/jobs/job-check.sh > $DATAROOT/logs/job-check.sh
-#jobidC=$(submit_with_check sbatch --dependency=afterany:$jobid6 --parsable $DATAROOT/logs/job-check.sh)
+jobidC=$(submit_with_check sbatch --dependency=afterany:$jobid6 --parsable $DATAROOT/logs/job-check.sh)
 echo "Submitted check job: $jobidC"
 
 atparse < $PACKAGEROOT/jobs/job-fetch-data.sh > $DATAROOT/logs/job-fetch-data.sh
@@ -127,7 +127,6 @@ atparse < $PACKAGEROOT/jobs/job-fetch-ccpa.sh > $DATAROOT/logs/job-fetch-ccpa.sh
 jobidFC=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-fetch-ccpa.sh)
 echo "Submitted CCPA fetch job: $jobidFC"
 
-exit
 # gen_ens_prod: needs a complete run (check OK)
 GENENS_DEP="afterok:$jobidC"
 atparse < $PACKAGEROOT/jobs/job-genensprod.sh > $DATAROOT/logs/job-genensprod.sh
