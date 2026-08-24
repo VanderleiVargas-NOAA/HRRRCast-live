@@ -19,6 +19,11 @@ if [ -n "$FCST_RESERVATION" ]; then
     FCST_RESERVATION="--reservation=${FCST_RESERVATION}"
 fi
 
+# Export configuration (specify variables and lead hours here)
+EXPORT_OUTPUT_DIR=${EXPORT_OUTPUT_DIR:-"/scratch5/BMC/ai-datadepot/projects/HRRRCast"}
+EXPORT_VARIABLES=${EXPORT_VARIABLES:-"APCP REFC"}
+EXPORT_LEAD_HOURS=${EXPORT_LEAD_HOURS:-"1"}
+
 hr=$(echo "$INIT_TIME" | grep -oP '\d{2}$')
 
 # ---- proportional walltimes (calibrated from N_ENS=10, LEAD=6, N_GPUS=2) ----
@@ -48,6 +53,7 @@ GRIDSTAT_WALLTIME=$(secs_to_hms "$(est $GRIDSTAT_BASE $GRIDSTAT_PER_LEAD $LEADS)
 # fixed / near-constant jobs
 GET_ICS_WALLTIME="00:10:00"
 MAKE_ICS_WALLTIME="00:10:00"
+EXPORT_WALLTIME="00:10:00"
 CLEAN_WALLTIME="00:10:00"
 CHECK_WALLTIME="00:05:00"
 REPORT_WALLTIME="00:06:00"
@@ -110,9 +116,15 @@ atparse < $PACKAGEROOT/jobs/job-fcst.sh > $DATAROOT/logs/job-fcst.sh
 jobid5=$(submit_with_check sbatch --dependency=afterok:$jobid3:$jobid4 --kill-on-invalid-dep=yes --array=0-$((N_GPUS-1)) --wait-all-nodes=1 ${FCST_RESERVATION} --parsable $DATAROOT/logs/job-fcst.sh)
 echo "Submitted forecast job array: $jobid5"
 
-# clean the run directory once forecasts complete, keeping only final products
+# export forecasts to destination
+export EXPORT_OUTPUT_DIR EXPORT_VARIABLES EXPORT_LEAD_HOURS EXPORT_WALLTIME
+atparse < $PACKAGEROOT/jobs/job-export.sh > $DATAROOT/logs/job-export.sh
+jobid_export=$(submit_with_check sbatch --dependency=afterok:$jobid5 --parsable $DATAROOT/logs/job-export.sh)
+echo "Submitted export job: $jobid_export"
+
+# clean the run directory once forecasts and export complete, keeping only final products
 atparse < $PACKAGEROOT/jobs/job-clean.sh > $DATAROOT/logs/job-clean.sh
-jobid6=$(submit_with_check sbatch --dependency=afterok:$jobid5 --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean.sh)
+jobid6=$(submit_with_check sbatch --dependency=afterok:$jobid5:$jobid_export --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean.sh)
 echo "Submitted clean job: $jobid6"
 
 atparse < $PACKAGEROOT/jobs/job-check.sh > $DATAROOT/logs/job-check.sh
