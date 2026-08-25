@@ -2,7 +2,7 @@
 #SBATCH --job-name=export
 #SBATCH --output=logs/export_%j.out
 #SBATCH --partition=u1-compute
-#SBATCH --account=@[ACCNR]
+#SBATCH --account=@[CPU_ACCNR]
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
