@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=fetch_data
-#SBATCH --output=logs/fetch_data_%j.out
+#SBATCH --job-name=fetch_mrms
+#SBATCH --output=logs/fetch_mrms_%j.out
 #SBATCH --partition=u1-service
 #SBATCH --account=@[CPU_ACCNR]
 #SBATCH --nodes=1
@@ -18,7 +18,7 @@ DATAROOT=@[DATAROOT]
 
 # MRMS / HPSS settings (hardcoded; edit here to change source/target)
 TAR_TEMPLATE='/NCEPPROD/hpssprod/runhistory/rh{Y}/{YM}/{YMD}/dcom_ldmdata_obs.tar'
-PATHSPEC='./upperair/mrms/conus/MergedReflectivityQComposite'
+PATHSPEC='./'
 GUNZIP=1
 
 # HPSS client (htar). Adjust the module name if your system differs.
@@ -28,8 +28,8 @@ module load hpss 2>/dev/null || true
 DATE0=${INIT_TIME%%T*}; DATE0=${DATE0//-/}      # YYYYMMDD
 HOUR0=${INIT_TIME#*T}                            # HH
 INIT_STAMP="${DATE0}${HOUR0}"
-OUTDIR="${DATAROOT}/obs/${INIT_STAMP}"
-LOGDIR="${DATAROOT}/logs/fetch_data_${INIT_STAMP}"
+OUTDIR="${DATAROOT}/obs/mrms/${INIT_STAMP}"
+LOGDIR="${DATAROOT}/logs/fetch_mrms_${INIT_STAMP}"
 mkdir -p "${OUTDIR}" "${LOGDIR}"
 
 # Build the set of required valid times (init + 0..LEAD hours), grouped by date.
@@ -41,7 +41,7 @@ for (( h=0; h<=LEAD_HOUR; h++ )); do
     DATE_HOURS[$vd]+="${vh} "
 done
 
-echo "In fetch_data, init=${INIT_STAMP}, lead=${LEAD_HOUR}, outdir=${OUTDIR}"
+echo "In fetch_mrms, init=${INIT_STAMP}, lead=${LEAD_HOUR}, outdir=${OUTDIR}"
 echo "Required dates: ${!DATE_HOURS[*]}"
 
 # Fetch, per date, only the scans whose valid hour is in the required set.
