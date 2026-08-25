@@ -104,13 +104,6 @@ cd $DATAROOT
 
 echo "PACKAGEROOT=$PACKAGEROOT,DATAROOT=$DATAROOT"
 
-# grid_stat: needs gen_ens_prod output AND the fetched obs
-atparse < $PACKAGEROOT/jobs/job-gridstat.sh > $DATAROOT/logs/job-gridstat.sh
-jobidS=$(submit_with_check sbatch --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-gridstat.sh)
-echo "Submitted gridstat job: $jobidS"
-
-exit
-
 atparse < $PACKAGEROOT/jobs/job-get-ics.sh > $DATAROOT/logs/job-get-ics.sh
 jobid1=$(submit_with_check sbatch --parsable $DATAROOT/logs/job-get-ics.sh)
 echo "Submitted job: $jobid1"
