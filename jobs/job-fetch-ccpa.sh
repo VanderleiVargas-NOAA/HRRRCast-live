@@ -41,7 +41,7 @@ else
 fi
 
 # Shared output keyed by (folder-date)+cycle so overlapping inits reuse the same download.
-OUTBASE="${DATAROOT}/obs_ccpa/${FDATE}"
+OUTBASE="${DATAROOT}/obs/ccpa/${FDATE}"
 CYCLE_DIR="${OUTBASE}/${CYC}"
 LOGDIR="${DATAROOT}/logs/fetch_ccpa_${FDATE}"
 mkdir -p "${OUTBASE}" "${LOGDIR}"
