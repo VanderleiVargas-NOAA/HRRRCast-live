@@ -31,7 +31,7 @@ DATE=${INIT_TIME%%T*}; DATE=${DATE//-/}
 HOUR=${INIT_TIME#*T}
 INIT_STAMP="${DATE}${HOUR}"
 LEAD_SEQ=$(seq -s, 0 "${LEAD_HOUR}"); LEAD_SEQ=${LEAD_SEQ%,}
-MRMS_OBS_DIR="${DATAROOT}/obs/${INIT_STAMP}/upperair/mrms/conus/MergedReflectivityQComposite" # must match job-fetch-data.sh
+MRMS_OBS_DIR="${DATAROOT}/obs/mrms/${INIT_STAMP}/upperair/mrms/conus/MergedReflectivityQComposite"
 
 mkdir -p "${GRIDSTAT_OUTPUT_BASE}" "${GRIDSTAT_STAGING_DIR}"
 
