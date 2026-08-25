@@ -1,4 +1,7 @@
 __pycache__/
 *.py[cod]
-obs*/
-metprd
+obs/
+metprd/
+202*/
+logs/
+
