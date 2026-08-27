@@ -21,8 +21,11 @@ fi
 
 # Export configuration (specify variables and lead hours here)
 EXPORT_OUTPUT_DIR=${EXPORT_OUTPUT_DIR:-"/scratch5/BMC/ai-datadepot/projects/HRRRCast"}
-EXPORT_VARIABLES=${EXPORT_VARIABLES:-"APCP REFC"}
-EXPORT_LEAD_HOURS=${EXPORT_LEAD_HOURS:-"1"}
+EXPORT_LEAD_HOURS=${EXPORT_LEAD_HOURS:-"all"}
+EXPORT_VARIABLE_CATEGORIES=${EXPORT_VARIABLE_CATEGORIES:-"surface-level surface-diagnostics"}
+EXPORT_VARIABLES=${EXPORT_VARIABLES:-}
+# NOTE: if both EXPORT_VARIABLES and EXPORT_VARIABLE_CATEGORIES are provided, their union
+# will be used for export.
 
 hr=$(echo "$INIT_TIME" | grep -oP '\d{2}$')
 
@@ -126,7 +129,7 @@ jobid5=$(submit_with_check sbatch $(dep_flag afterok "$jobid3" "$jobid4") --kill
 echo "Submitted forecast job array: $jobid5"
 
 # export forecasts to destination
-export EXPORT_OUTPUT_DIR EXPORT_VARIABLES EXPORT_LEAD_HOURS EXPORT_WALLTIME
+export EXPORT_OUTPUT_DIR EXPORT_LEAD_HOURS EXPORT_VARIABLE_CATEGORIES EXPORT_VARIABLES EXPORT_WALLTIME
 atparse < $PACKAGEROOT/jobs/job-export.sh > $DATAROOT/logs/job-export.sh
 jobid_export=$(submit_with_check sbatch $(dep_flag afterok "$jobid5") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-export.sh)
 echo "Submitted export job: $jobid_export"
