@@ -16,10 +16,18 @@ LEAD_HOUR=@[LEAD_HOUR]
 PACKAGEROOT=@[PACKAGEROOT]
 DATAROOT=@[DATAROOT]
 
-# MRMS / HPSS settings (hardcoded; edit here to change source/target)
+# MRMS / HPSS settings (hardcoded; edit here to change source/target).
+# CONUS composite reflectivity only; one scan per required valid hour.
 TAR_TEMPLATE='/NCEPPROD/hpssprod/runhistory/rh{Y}/{YM}/{YMD}/dcom_ldmdata_obs.tar'
-PATHSPEC='./'
+MRMS_SUBTREE='./upperair/mrms/conus/MergedReflectivityQComposite'
 GUNZIP=1
+
+# The scan cadence is NOT assumed — the nearest scan to each HH:00:00 is picked
+# from the actual listing. TOLERANCE_SEC caps how far "nearest" may be: if the
+# closest scan for an hour is farther than this (cadence change / data gap), that
+# hour is skipped with a warning. Keep this >= Grid-Stat's OBS_..._FILE_WINDOW
+# (±300 s) so we never fetch a scan Grid-Stat would reject anyway.
+TOLERANCE_SEC=${TOLERANCE_SEC:-300}
 
 # HPSS client (htar). Adjust the module name if your system differs.
 module load hpss 2>/dev/null || true
@@ -32,8 +40,7 @@ OUTDIR="${DATAROOT}/obs/mrms/${INIT_STAMP}"
 LOGDIR="${DATAROOT}/logs/fetch_mrms_${INIT_STAMP}"
 mkdir -p "${OUTDIR}" "${LOGDIR}"
 
-# Build the set of required valid times (init + 0..LEAD hours), grouped by date.
-# DATE_HOURS[YYYYMMDD] = "HH HH ..." for the hours needed on that date.
+# Required valid times (init + 0..LEAD hours), grouped by date.
 declare -A DATE_HOURS
 for (( h=0; h<=LEAD_HOUR; h++ )); do
     vt=$(date -u -d "${DATE0:0:4}-${DATE0:4:2}-${DATE0:6:2} ${HOUR0}:00:00 UTC +${h} hours" +%Y%m%d%H)
@@ -44,11 +51,9 @@ done
 echo "In fetch_mrms, init=${INIT_STAMP}, lead=${LEAD_HOUR}, outdir=${OUTDIR}"
 echo "Required dates: ${!DATE_HOURS[*]}"
 
-# Fetch, per date, only the scans whose valid hour is in the required set.
 overall_rc=0
 for d in "${!DATE_HOURS[@]}"; do
     hours=$(echo "${DATE_HOURS[$d]}" | tr ' ' '\n' | grep -v '^$' | sort -u)
-    hh_alt=$(echo "${hours}" | paste -sd'|' -)          # e.g. 18|19|20|...
     y=${d:0:4}; ym=${d:0:6}
     tarfile="${TAR_TEMPLATE//\{Y\}/$y}"
     tarfile="${tarfile//\{YM\}/$ym}"
@@ -59,25 +64,53 @@ for d in "${!DATE_HOURS[@]}"; do
 
     echo "[$d] hours: $(echo ${hours} | tr '\n' ' ')"
 
-    # 1) list the MRMS subtree of the daily tar
-    if ! htar -tvf "${tarfile}" "${PATHSPEC}" > "${index}" 2> "${log}"; then
-        echo "[$d] WARN: htar -t returned non-zero (see ${log}); continuing with whatever was listed" >&2
+    # 1) list ONLY the CONUS composite-reflectivity subtree of the daily tar
+    if ! htar -tvf "${tarfile}" "${MRMS_SUBTREE}" > "${index}" 2> "${log}"; then
+        echo "[$d] WARN: htar -t returned non-zero (see ${log}); continuing with what was listed" >&2
     fi
 
-    # 2) select member paths for the required valid hours (accept .grib2 or .grib2.gz)
-    awk '{print $NF}' "${index}" \
-        | grep -E "MergedReflectivityQComposite_00\.50_${d}-(${hh_alt})[0-9]{4}\.grib2(\.gz)?$" \
-        | sort -u > "${members}"
+    # 2) for each required hour, pick the ONE scan nearest HH:00:00, but only if
+    #    it falls within TOLERANCE_SEC (cadence-agnostic; skips gaps with a warning).
+    targets=$(for hh in ${hours}; do echo "${hh}:$(( 10#${hh} * 3600 ))"; done | paste -sd, -)
+    awk -v targets="${targets}" -v tol="${TOLERANCE_SEC}" '
+        BEGIN { n = split(targets, A, ",")
+                for (i = 1; i <= n; i++) { split(A[i], kv, ":"); HH[i] = kv[1]; T[i] = kv[2] } }
+        {
+            p = $NF
+            if (match(p, /-[0-9][0-9][0-9][0-9][0-9][0-9]\.grib2/)) {
+                ts  = substr(p, RSTART+1, 6)
+                sec = substr(ts,1,2)*3600 + substr(ts,3,2)*60 + substr(ts,5,2)
+                for (i = 1; i <= n; i++) {
+                    dd = sec - T[i]; if (dd < 0) dd = -dd
+                    if (best[i] == "" || dd < bd[i]) { bd[i] = dd; best[i] = p }
+                }
+            }
+        }
+        END {
+            for (i = 1; i <= n; i++) {
+                if (best[i] == "")
+                    printf("WARN: hour %s — no scan found\n", HH[i]) > "/dev/stderr"
+                else if (bd[i] > tol)
+                    printf("WARN: hour %s — nearest scan is %ds away (> %ds tolerance); skipping\n", HH[i], bd[i], tol) > "/dev/stderr"
+                else
+                    print best[i]
+            }
+        }
+    ' "${index}" > "${members}" 2>> "${log}"
 
+    # surface any per-hour warnings to the job output too
+    grep -E "^WARN:" "${log}" 2>/dev/null | sed "s/^/[$d] /" >&2 || true
+
+    sort -u -o "${members}" "${members}"
     n=$(wc -l < "${members}")
     if [[ "${n}" -eq 0 ]]; then
         echo "[$d] FAILED: no MRMS scans matched the required hours (see ${index})" >&2
         overall_rc=1
         continue
     fi
-    echo "[$d] extracting ${n} scan(s)"
+    echo "[$d] extracting ${n} scan(s) (one nearest each required hour)"
 
-    # 3) extract only those members into the per-init folder
+    # 3) extract just those members into the per-init folder
     if ( cd "${OUTDIR}" && xargs -a "${members}" htar -xvf "${tarfile}" ) >> "${log}" 2>&1; then
         echo "[$d] OK"
     else
@@ -90,10 +123,20 @@ for d in "${!DATE_HOURS[@]}"; do
     fi
 done
 
-# gunzip any extracted MRMS files
-if [[ "${GUNZIP}" == "1" ]]; then
-    find "${OUTDIR}" -name '*.grib2.gz' -exec gunzip -f {} + 2>/dev/null
+# Flatten: htar recreates the tar's internal path (./upperair/mrms/conus/...),
+# but we want the scans directly under obs/mrms/${INIT_STAMP}/.
+# Move per-file (portable), then delete only EMPTY dirs — never rm -rf, so a
+# failed move can't destroy the data.
+if [[ -d "${OUTDIR}/upperair" ]]; then
+    find "${OUTDIR}/upperair" -type f -name 'MergedReflectivityQComposite_*' \
+        -exec mv -f {} "${OUTDIR}/" \;
+    find "${OUTDIR}/upperair" -depth -type d -empty -delete 2>/dev/null
 fi
 
-echo "Done fetching MRMS for ${INIT_STAMP}. Per-date logs in ${LOGDIR}"
+# gunzip extracted MRMS files
+if [[ "${GUNZIP}" == "1" ]]; then
+    find "${OUTDIR}" -maxdepth 1 -name '*.grib2.gz' -exec gunzip -f {} + 2>/dev/null
+fi
+
+echo "Done fetching MRMS for ${INIT_STAMP}. Files in ${OUTDIR}, per-date logs in ${LOGDIR}"
 exit ${overall_rc}

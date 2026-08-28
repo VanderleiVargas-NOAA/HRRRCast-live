@@ -8,32 +8,36 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --time=@[CLEAN_WALLTIME]
 
+set -uo pipefail
+
 # set vars
 INIT_TIME="@[INIT_TIME]"
 PACKAGEROOT=@[PACKAGEROOT]
 DATAROOT=@[DATAROOT]
 
-# MRMS obs location — per-init folder, MUST match job-fetch-data.sh.
-DATE=${INIT_TIME%%T*}; DATE=${DATE//-/}
-HOUR=${INIT_TIME#*T}
-INIT_STAMP="${DATE}${HOUR}"
-OBS_DIR="${DATAROOT}/obs/${INIT_STAMP}"
+DATE0=${INIT_TIME%%T*}; DATE0=${DATE0//-/}      # YYYYMMDD
+HOUR0=${INIT_TIME#*T}                            # HH
+INIT_STAMP="${DATE0}${HOUR0}"
 
-echo "In clean_obs, init=${INIT_STAMP}, obs_dir=${OBS_DIR}"
+OBS_ROOT="${DATAROOT}/obs"
 
-# SAFETY: require a non-empty init stamp and a path strictly under DATAROOT.
-if [[ -z "${INIT_STAMP}" || -z "${DATAROOT}" || "${OBS_DIR}" != "${DATAROOT}/"* ]]; then
-    echo "ABORT: refusing to remove '${OBS_DIR}'."
-    exit 1
-fi
+echo "In clean_obs, init=${INIT_STAMP}, obs_root=${OBS_ROOT}"
 
-if [[ ! -d "${OBS_DIR}" ]]; then
-    echo "Nothing to clean: ${OBS_DIR} does not exist."
-    exit 0
-fi
+# Each obs type is fetched into its own per-init folder, so cleanup is just
+# removing this init's folders. Guarded to only ever act strictly under obs/.
+for type in mrms ccpa ndas; do
+    dir="${OBS_ROOT}/${type}/${INIT_STAMP}"
+    if [[ -z "${INIT_STAMP}" || "${dir}" != "${OBS_ROOT}/"* ]]; then
+        echo "  guard: refusing to remove '${dir}'"; continue
+    fi
+    if [[ -d "${dir}" ]]; then
+        rm -rf "${dir}"
+        echo "  removed ${dir}"
+    else
+        echo "  not present: ${dir}"
+    fi
+    # prune the now-empty type dir (leaves obs/ itself)
+    rmdir "${OBS_ROOT}/${type}" 2>/dev/null || true
+done
 
-# remove all fetched obs, then prune the now-empty parent dirs
-find "${OBS_DIR}" -mindepth 1 -delete
-rmdir -p "${OBS_DIR}" 2>/dev/null || true
-
-echo "Done removing fetched obs under ${OBS_DIR}"
+echo "Done clean_obs for init ${INIT_STAMP}."
