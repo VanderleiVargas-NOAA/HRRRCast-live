@@ -5,7 +5,7 @@
 #SBATCH --account=@[CPU_ACCNR]
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=1
 #SBATCH --time=@[FETCH_WALLTIME]
 
 set -uo pipefail
