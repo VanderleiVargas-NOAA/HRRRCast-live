@@ -16,7 +16,7 @@ PACKAGEROOT=@[PACKAGEROOT]
 DATAROOT=@[DATAROOT]
 
 # METplus config + output location (edit here to change)
-CONF="${PACKAGEROOT}/parm/GenEnsProd_REFC_HRRRCast.conf"
+CONF="${PACKAGEROOT}/parm/GenEnsProd_HRRRCast.conf"
 MET_OUTPUT_BASE="${DATAROOT}/metprd/GenEnsProd"
 
 # load METplus (same environment as job-genensprod.sh)
