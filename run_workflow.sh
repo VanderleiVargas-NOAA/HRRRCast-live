@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_hrrrcast_live.sh — driver for live HRRRCast forecasts
+# run_workflow.sh — driver for live HRRRCast forecasts
 #
 # Owns only the run window and cadence. It generates the list of init cycles
 # and launches the HRRRCast pipeline once per cycle (sequentially).
@@ -7,13 +7,16 @@
 # are set inside the HRRRCast scripts, not here.
 #
 # Usage:
-#   ./run_hrrrcast_live.sh
-#   START_DATE=2024-07-17T00 END_DATE=2024-07-18T00 INIT_INTERVAL=6 FCST_LENGTH=24 ./run_hrrrcast_live.sh
+#   ./run_workflow.sh
+#   START_DATE=2024-07-17T00 END_DATE=2024-07-18T00 INIT_INTERVAL=6 FCST_LENGTH=24 ./run_workflow.sh
 #
 #   # Rerun ONLY the cycles listed in a file (one INIT_TIME per line, e.g. the
 #   # failed_runs.txt written by job-check.sh). Overrides the date range.
-#   ./run_hrrrcast_live.sh failed_runs.txt
-#   RERUN_FILE=failed_runs.txt ./run_hrrrcast_live.sh
+#   ./run_workflow.sh failed_runs.txt
+#   RERUN_FILE=failed_runs.txt ./run_workflow.sh
+#
+#   # Toggle individual jobs (passed through to submit_all.sh), e.g.
+#   RUN_GENENSPROD=YES RUN_GRIDSTAT=YES ./run_workflow.sh
 #
 set -euo pipefail
 
