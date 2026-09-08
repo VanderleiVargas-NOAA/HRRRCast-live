@@ -7,7 +7,7 @@
 #SBATCH --account=@[FCST_ACCNR]
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=96
+#SBATCH --cpus-per-task=8
 #SBATCH --time=@[FCST_WALLTIME]
 #SBATCH --deadline=@[DEADLINE]
 #SBATCH --mem=160G

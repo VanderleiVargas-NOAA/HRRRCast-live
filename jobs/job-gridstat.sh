@@ -17,7 +17,7 @@ DATAROOT=@[DATAROOT]
 # METplus config + I/O locations (edit here to change)
 CONF="${PACKAGEROOT}/parm/GridStat_REFC_HRRRCast.conf"
 MET_OUTPUT_BASE="${DATAROOT}/metprd/GenEnsProd"          # must match job-genensprod.sh
-GRIDSTAT_OUTPUT_BASE="${DATAROOT}/metprd/GridStat_ensprob"
+GRIDSTAT_OUTPUT_BASE="${DATAROOT}/metprd/GridStat"
 GRIDSTAT_STAGING_DIR="${DATAROOT}/metprd/prob/stage/REFC_ensprob"
 
 # load METplus (adjust module name/version for your system)
@@ -31,7 +31,7 @@ DATE=${INIT_TIME%%T*}; DATE=${DATE//-/}
 HOUR=${INIT_TIME#*T}
 INIT_STAMP="${DATE}${HOUR}"
 LEAD_SEQ=$(seq -s, 0 "${LEAD_HOUR}"); LEAD_SEQ=${LEAD_SEQ%,}
-MRMS_OBS_DIR="${DATAROOT}/obs/mrms/${INIT_STAMP}/upperair/mrms/conus/MergedReflectivityQComposite"
+MRMS_OBS_DIR="${DATAROOT}/obs/mrms/${INIT_STAMP}"
 
 mkdir -p "${GRIDSTAT_OUTPUT_BASE}" "${GRIDSTAT_STAGING_DIR}"
 

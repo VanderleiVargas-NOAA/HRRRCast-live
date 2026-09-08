@@ -5,7 +5,7 @@
 #SBATCH --account=@[CPU_ACCNR]
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=4
 #SBATCH --time=@[MAKE_ICS_WALLTIME]
 #SBATCH --deadline=@[DEADLINE]
 

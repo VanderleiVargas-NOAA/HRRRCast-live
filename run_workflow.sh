@@ -29,6 +29,9 @@ INIT_INTERVAL=${INIT_INTERVAL:-6}          # hours between init cycles
 FCST_LENGTH=${FCST_LENGTH:-24}             # forecast length (hours)
 N_ENSEMBLES=${N_ENSEMBLES:-10}             # ensemble members
 N_GPUS=${N_GPUS:-2}                        # GPU slots (forecast job-array width)
+BATCH_SIZE=${BATCH_SIZE:-0}                # cycles to submit before WAITING for them
+                                           # to finish; 0 = submit all at once (no wait)
+POLL_INTERVAL=${POLL_INTERVAL:-60}         # seconds between queue checks while waiting
 # NOTE: cycles are submitted sequentially, NOT in parallel. submit_all.sh only
 # *submits* the SLURM jobs (fast); the real parallel work runs in SLURM via the
 # dependency chain. Running submit_all.sh concurrently is unsafe because it
@@ -94,14 +97,50 @@ echo "==========================="
 # --- Launch the HRRRCast pipeline per cycle (sequentially) -----------------
 # Per cycle:
 #   ACCNR=.. CPU_ACCNR=.. submit_all.sh <INIT_TIME> <FCST_LENGTH> <N_ENSEMBLES> <N_GPUS>
+# submit_all.sh runs on stderr (its set -x trace + summary is shown live); the
+# submitted SLURM job ids are echoed on stdout so the caller can collect them.
 launch_cycle() {
     local init_time=$1
-    echo "[submit] $init_time"
-    "$SUBMIT_SCRIPT" "$init_time" "$FCST_LENGTH" "$N_ENSEMBLES" "$N_GPUS"
+    echo "[submit] $init_time" >&2
+    local out
+    out=$("$SUBMIT_SCRIPT" "$init_time" "$FCST_LENGTH" "$N_ENSEMBLES" "$N_GPUS")
+    printf '%s\n' "$out" >&2                     # show submit_all's summary lines
+    awk '/^Submitted/ {print $NF}' <<<"$out"     # emit the job ids (last field)
 }
 
-for cyc in "${CYCLES[@]}"; do
-    launch_cycle "$cyc"
-done
+# Block until every job id in the comma-separated list has left the queue.
+wait_for_jobs() {
+    local ids="$1"
+    [[ -z "$ids" ]] && return 0
+    echo "[batch] waiting for jobs to finish: ${ids}" >&2
+    while :; do
+        local n
+        n=$(squeue -h -j "$ids" -o '%i' 2>/dev/null | wc -l || true)
+        (( n == 0 )) && break
+        echo "[batch] $n job(s)/array-task(s) still queued or running; checking again in ${POLL_INTERVAL}s" >&2
+        sleep "$POLL_INTERVAL"
+    done
+    echo "[batch] all jobs finished." >&2
+}
+
+if (( BATCH_SIZE > 0 )); then
+    total=${#CYCLES[@]}; b=0
+    for (( i=0; i<total; i+=BATCH_SIZE )); do
+        b=$(( b + 1 ))
+        batch=( "${CYCLES[@]:i:BATCH_SIZE}" )
+        echo "=== batch ${b}: ${batch[*]} ==="
+        ids=""
+        for cyc in "${batch[@]}"; do
+            cyc_ids=$(launch_cycle "$cyc" | paste -sd, -)
+            [[ -n "$cyc_ids" ]] && ids+="${ids:+,}${cyc_ids}"
+        done
+        wait_for_jobs "$ids"
+    done
+else
+    for cyc in "${CYCLES[@]}"; do
+        launch_cycle "$cyc" >/dev/null      # ids not needed when not batching
+    done
+fi
 echo "All forecast pipelines submitted."
 echo "Done."
+

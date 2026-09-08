@@ -81,19 +81,51 @@ for key in ${keys}; do
         [[ "${ef}|${ec}" == "${key}" ]] && members+=( "./nam.t${cyc}z.prepbufr.tm${nn}.nr" )
     done
 
-    # try each candidate tar name until one extracts the members
+    # 1) Resolve which archive name exists for this cycle by LISTING it first.
+    # htar -t reads the HPSS index (cheap, no tape mount), so we confirm the right
+    # name — it varies by period — without paying for a failed extraction.
     got=0
+    tarfile=""; tarname=""; listing=""
     for tmpl in "${TAR_NAMES[@]}"; do
-        tarname="${tmpl//\{D\}/$fdate}"; tarname="${tarname//\{H\}/$cyc}"
-        tarfile="${archdir}/${tarname}"
-        echo "[${fdate}${cyc}] trying ${tarfile}" >> "${log}"
-        if ( cd "${OUTDIR}" && htar -xvf "${tarfile}" "${members[@]}" ) >> "${log}" 2>&1; then
-            got=1; echo "[${fdate}${cyc}] OK via ${tarname}"; break
-        elif grep -qE 'HTAR:.*(-rw-|drwx)' "${log}"; then
-            got=1; echo "[${fdate}${cyc}] OK (non-zero exit, files extracted) via ${tarname}"; break
+        cand_name="${tmpl//\{D\}/$fdate}"; cand_name="${cand_name//\{H\}/$cyc}"
+        cand="${archdir}/${cand_name}"
+        echo "[${fdate}${cyc}] checking ${cand}" >> "${log}"
+        if listing=$(htar -tvf "${cand}" 2>>"${log}") && [[ -n "${listing}" ]]; then
+            tarfile="${cand}"; tarname="${cand_name}"
+            echo "[${fdate}${cyc}] resolved archive: ${tarname}" >> "${log}"
+            break
         fi
     done
-    (( got == 0 )) && { echo "[${fdate}${cyc}] FAILED — no candidate tar produced files (see ${log})" >&2; overall_rc=1; }
+
+    if [[ -z "${tarfile}" ]]; then
+        echo "[${fdate}${cyc}] FAILED — no candidate archive found on HPSS (see ${log})" >&2
+        overall_rc=1
+    else
+        # 2) Keep only members actually present in the tar (NAM/NDAS omits some
+        # tmNN depending on the era), so a missing member can't fail the cycle.
+        present=()
+        for m in "${members[@]}"; do
+            base="${m#./}"
+            if grep -qF -- "${base}" <<< "${listing}"; then
+                present+=( "${m}" )
+            else
+                echo "[${fdate}${cyc}] skip missing member ${base}" >> "${log}"
+            fi
+        done
+
+        # 3) Extract only the members that exist.
+        if (( ${#present[@]} == 0 )); then
+            echo "[${fdate}${cyc}] FAILED — none of the wanted members exist in ${tarname} (see ${log})" >&2
+            overall_rc=1
+        elif ( cd "${OUTDIR}" && htar -xvf "${tarfile}" "${present[@]}" ) >> "${log}" 2>&1; then
+            got=1; echo "[${fdate}${cyc}] OK via ${tarname} (${#present[@]}/${#members[@]} members)"
+        elif grep -qE 'HTAR:.*(-rw-|drwx)' "${log}"; then
+            got=1; echo "[${fdate}${cyc}] OK (non-zero exit, files extracted) via ${tarname}"
+        else
+            echo "[${fdate}${cyc}] FAILED — extraction error (see ${log})" >&2
+            overall_rc=1
+        fi
+    fi
 
     # Rename this cycle's files to VALID-time names so nothing collides across
     # days (e.g. two t18z cycles in a 48-h run) and the layout is flat.
@@ -108,3 +140,4 @@ done
 
 echo "Done fetching NDAS for ${INIT_STAMP}. Files in ${OUTDIR}, per-cycle logs in ${LOGDIR}"
 exit ${overall_rc}
+

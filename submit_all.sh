@@ -35,7 +35,7 @@ RUN_GET_BCS=${RUN_GET_BCS:-YES}
 RUN_MAKE_ICS=${RUN_MAKE_ICS:-YES}
 RUN_MAKE_BCS=${RUN_MAKE_BCS:-YES}
 RUN_FCST=${RUN_FCST:-YES}
-RUN_EXPORT=${RUN_EXPORT:-NO}
+RUN_EXPORT=${RUN_EXPORT:-YES}
 RUN_CLEAN=${RUN_CLEAN:-YES}
 RUN_FINALIZE=${RUN_FINALIZE:-YES}   # 0/1 status ledger (initialize + finalize)
 RUN_FETCH_MRMS=${RUN_FETCH_MRMS:-YES}
@@ -44,11 +44,14 @@ RUN_FETCH_NDAS=${RUN_FETCH_NDAS:-YES}
 RUN_PB2NC=${RUN_PB2NC:-YES}
 RUN_ENSEMBLESTAT=${RUN_ENSEMBLESTAT:-YES}
 RUN_GENENSPROD=${RUN_GENENSPROD:-YES}
-RUN_GRIDSTAT=${RUN_GRIDSTAT:-NO}
-RUN_CLEAN_GENENSPROD=${RUN_CLEAN_GENENSPROD:-NO}
-RUN_CLEAN_OBS=${RUN_CLEAN_OBS:-NO}
-RUN_CLEAN_FCST=${RUN_CLEAN_FCST:-NO}
-RUN_DISKREPORT=${RUN_DISKREPORT:-NO}
+RUN_GRIDSTAT=${RUN_GRIDSTAT:-YES}
+RUN_GRIDSTAT_APCP=${RUN_GRIDSTAT_APCP:-YES}   # probabilistic precip (APCP) vs CCPA
+RUN_CLEAN_GENENSPROD=${RUN_CLEAN_GENENSPROD:-YES}
+RUN_CLEAN_PB2NC=${RUN_CLEAN_PB2NC:-YES}       # remove pb2nc point-obs after ensemblestat
+RUN_ARCHIVE=${RUN_ARCHIVE:-YES}               # copy selected init hours to ARCHIVE_DIR before cleanup
+RUN_CLEAN_OBS=${RUN_CLEAN_OBS:-YES}
+RUN_CLEAN_FCST=${RUN_CLEAN_FCST:-YES}
+RUN_DISKREPORT=${RUN_DISKREPORT:-YES}
 
 # Export configuration (specify variables and lead hours here)
 EXPORT_OUTPUT_DIR=${EXPORT_OUTPUT_DIR:-"/scratch5/BMC/ai-datadepot/projects/HRRRCast"}
@@ -57,6 +60,10 @@ EXPORT_VARIABLE_CATEGORIES=${EXPORT_VARIABLE_CATEGORIES:-"surface-level surface-
 EXPORT_VARIABLES=${EXPORT_VARIABLES:-}
 # NOTE: if both EXPORT_VARIABLES and EXPORT_VARIABLE_CATEGORIES are provided, their union
 # will be used for export.
+
+# Archive configuration (job-archive.sh copies matching init hours before cleanup)
+ARCHIVE_DIR=${ARCHIVE_DIR:-"${DATAROOT}/archive"}   # destination root
+ARCHIVE_HOURS=${ARCHIVE_HOURS:-"00"}                # which init hours to keep (e.g. "00" or "00,12")
 
 hr=$(echo "$INIT_TIME" | grep -oP '\d{2}$')
 
@@ -70,12 +77,13 @@ secs_to_hms() { local s=$1; printf "%02d:%02d:%02d" $((s/3600)) $(((s%3600)/60))
 est() { awk -v b="$1" -v r="$2" -v u="$3" -v k="$SAFETY" 'BEGIN{ printf "%d", (b + r*u)*k + 0.999 }'; }
 
 # rate constants in SECONDS
-FCST_BASE=120;      FCST_PER_STEP=25        # fcst: per (member * lead)
+FCST_BASE=420;      FCST_PER_STEP=35        # fcst: fixed model+data load+XLA warmup (~5min) + per (member * lead)
 GETBCS_BASE=60;     GETBCS_PER_LEAD=3       # get_bcs: per lead
 MAKEBCS_BASE=60;    MAKEBCS_PER_LEAD=41     # make_bcs: per lead
-FETCH_BASE=60;      FETCH_PER_LEAD=5        # fetch_data: per lead
+FETCH_BASE=600;     FETCH_PER_LEAD=120      # fetch: HPSS htar is tape-bound (mount+seek/scan), not 5s/lead
 GENENS_BASE=120;    GENENS_PER_LEAD=200     # genensprod: per lead
 GRIDSTAT_BASE=120;  GRIDSTAT_PER_LEAD=200   # gridstat: per lead
+ENSSTAT_BASE=180;   ENSSTAT_PER_LEAD=180     # ensemblestat: per lead
 
 FCST_WALLTIME=$(secs_to_hms "$(est $FCST_BASE     $FCST_PER_STEP    $((MPT*LEADS)))")
 GET_BCS_WALLTIME=$(secs_to_hms "$(est $GETBCS_BASE   $GETBCS_PER_LEAD  $LEADS)")
@@ -83,6 +91,19 @@ MAKE_BCS_WALLTIME=$(secs_to_hms "$(est $MAKEBCS_BASE  $MAKEBCS_PER_LEAD $LEADS)"
 FETCH_WALLTIME=$(secs_to_hms "$(est $FETCH_BASE    $FETCH_PER_LEAD   $LEADS)")
 GENENSPROD_WALLTIME=$(secs_to_hms "$(est $GENENS_BASE  $GENENS_PER_LEAD  $LEADS)")
 GRIDSTAT_WALLTIME=$(secs_to_hms "$(est $GRIDSTAT_BASE $GRIDSTAT_PER_LEAD $LEADS)")
+ENSEMBLESTAT_WALLTIME=$(secs_to_hms "$(est $ENSSTAT_BASE $ENSSTAT_PER_LEAD $LEADS)")
+
+# Cap the CPU/MET walltimes at the u1-compute limit (8:00:00); sbatch rejects any
+# longer request. fcst runs on u1-h100 (7-day limit) and the fetch jobs on
+# u1-service (1-day limit), so neither is capped here.
+CPU_MAX_SEC=$(( 8*3600 ))
+hms_to_secs() { local IFS=:; set -- $1; echo $(( 10#$1*3600 + 10#$2*60 + 10#$3 )); }
+for _w in GET_BCS MAKE_BCS GENENSPROD GRIDSTAT ENSEMBLESTAT; do
+    _v="${_w}_WALLTIME"
+    if (( $(hms_to_secs "${!_v}") > CPU_MAX_SEC )); then
+        printf -v "$_v" '%s' "$(secs_to_hms "$CPU_MAX_SEC")"
+    fi
+done
 
 # fixed / near-constant jobs
 GET_ICS_WALLTIME="00:10:00"
@@ -93,7 +114,7 @@ FINALIZE_WALLTIME="00:05:00"
 REPORT_WALLTIME="00:06:00"
 PLOT_WALLTIME="00:30:00"
 PB2NC_WALLTIME="00:15:00"
-ENSEMBLESTAT_WALLTIME="00:20:00"
+ARCHIVE_WALLTIME="00:30:00"
 
 # set deadline only for near-realtime non-synoptic runs
 INIT_EPOCH=$(date -u -d "${INIT_TIME}:00:00 UTC" +"%s")
@@ -258,25 +279,49 @@ if on "$RUN_GRIDSTAT"; then
     echo "Submitted gridstat job: $jobidS"
 fi
 
+# ---- precip probabilistic verification (GenEnsProd APCP -> Grid-Stat vs CCPA) ----
+if on "$RUN_GRIDSTAT_APCP"; then
+    atparse < $PACKAGEROOT/jobs/job-gridstat-apcp.sh > $DATAROOT/logs/job-gridstat-apcp.sh
+    jobidSA=$(submit_with_check sbatch $(dep_flag afterok "$jobidG" "$jobidFC") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-gridstat-apcp.sh)
+    echo "Submitted gridstat-apcp job: $jobidSA"
+fi
+
 if on "$RUN_CLEAN_GENENSPROD"; then
     atparse < $PACKAGEROOT/jobs/job-clean-genensprod.sh > $DATAROOT/logs/job-clean-genensprod.sh
-    jobidGC=$(submit_with_check sbatch $(dep_flag afterok "$jobidS") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-genensprod.sh)
+    jobidGC=$(submit_with_check sbatch $(dep_flag afterok "$jobidS" "$jobidSA") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-genensprod.sh)
     echo "Submitted clean-genensprod job: $jobidGC"
+fi
+
+# remove the pb2nc point-obs NetCDF once its consumer (ensemblestat) is done
+if on "$RUN_CLEAN_PB2NC"; then
+    atparse < $PACKAGEROOT/jobs/job-clean-pb2nc.sh > $DATAROOT/logs/job-clean-pb2nc.sh
+    jobidPBC=$(submit_with_check sbatch $(dep_flag afterok "$jobidES") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-pb2nc.sh)
+    echo "Submitted clean-pb2nc job: $jobidPBC"
 fi
 
 # ---- cleanup ----
 # remove the fetched obs once their consumers are done (gridstat: mrms/ccpa; pb2nc: ndas)
 if on "$RUN_CLEAN_OBS"; then
     atparse < $PACKAGEROOT/jobs/job-clean-obs.sh > $DATAROOT/logs/job-clean-obs.sh
-    jobidO=$(submit_with_check sbatch $(dep_flag afterok "$jobidS" "$jobidPB") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-obs.sh)
+    jobidO=$(submit_with_check sbatch $(dep_flag afterok "$jobidS" "$jobidSA" "$jobidPB") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-obs.sh)
     echo "Submitted clean-obs job: $jobidO"
 fi
 
+# archive selected init hours (e.g. 00z) to ARCHIVE_DIR before the members are
+# removed. Depends on the forecast (and clean, which trims to the pgrb2 products);
+# a non-matching init hour makes the job a quick no-op.
+if on "$RUN_ARCHIVE"; then
+    export ARCHIVE_DIR ARCHIVE_HOURS ARCHIVE_WALLTIME
+    atparse < $PACKAGEROOT/jobs/job-archive.sh > $DATAROOT/logs/job-archive.sh
+    jobidA=$(submit_with_check sbatch $(dep_flag afterok "$jobid6" "$jobid5") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-archive.sh)
+    echo "Submitted archive job: $jobidA"
+fi
+
 # remove the remaining HRRRCast members once every member-consumer is done
-# (genensprod, ensemblestat) and export finished
+# (genensprod, ensemblestat), export finished, and the archive copy is done
 if on "$RUN_CLEAN_FCST"; then
     atparse < $PACKAGEROOT/jobs/job-clean-fcst.sh > $DATAROOT/logs/job-clean-fcst.sh
-    jobidP=$(submit_with_check sbatch $(dep_flag afterok "$jobidG" "$jobidES" "$jobid_export") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-fcst.sh)
+    jobidP=$(submit_with_check sbatch $(dep_flag afterok "$jobidG" "$jobidES" "$jobid_export" "$jobidA") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-fcst.sh)
     echo "Submitted clean-fcst job: $jobidP"
 fi
 
@@ -288,7 +333,7 @@ JOBIDS_FILE="$DATAROOT/logs/pipeline_jobids_${INIT_STAMP}.txt"
 : > "$JOBIDS_FILE"
 for v in "$jobid1" "$jobid2" "$jobid3" "$jobid4" "$jobid5" "$jobid_export" "$jobid6" \
          "$jobidF" "$jobidFC" "$jobidFN" "$jobidPB" "$jobidES" \
-         "$jobidG" "$jobidS" "$jobidGC" "$jobidO" "$jobidP"; do
+         "$jobidG" "$jobidS" "$jobidSA" "$jobidGC" "$jobidPBC" "$jobidO" "$jobidA" "$jobidP"; do
     [[ -n "$v" ]] && echo "$v" >> "$JOBIDS_FILE"
 done
 DEP_IDS=$(paste -sd: "$JOBIDS_FILE")
@@ -308,3 +353,4 @@ if on "$RUN_DISKREPORT" && [[ -n "$DEP_IDS" ]]; then
     jobidR=$(submit_with_check sbatch --dependency=afterany:$DEP_IDS --parsable $DATAROOT/logs/job-diskreport.sh)
     echo "Submitted disk report job: $jobidR"
 fi
+
