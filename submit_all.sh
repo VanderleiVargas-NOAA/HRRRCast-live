@@ -54,7 +54,7 @@ RUN_CLEAN_FCST=${RUN_CLEAN_FCST:-YES}
 RUN_DISKREPORT=${RUN_DISKREPORT:-YES}
 
 # Export configuration (specify variables and lead hours here)
-EXPORT_OUTPUT_DIR=${EXPORT_OUTPUT_DIR:-"/scratch5/BMC/ai-datadepot/projects/HRRRCast"}
+EXPORT_OUTPUT_DIR=${EXPORT_OUTPUT_DIR:-"/scratch3/BMC/ai-datadepot/Vanderlei.Vargas/export"}
 EXPORT_LEAD_HOURS=${EXPORT_LEAD_HOURS:-"all"}
 EXPORT_VARIABLE_CATEGORIES=${EXPORT_VARIABLE_CATEGORIES:-"surface-level surface-diagnostics"}
 EXPORT_VARIABLES=${EXPORT_VARIABLES:-}
@@ -81,8 +81,8 @@ FCST_BASE=420;      FCST_PER_STEP=35        # fcst: fixed model+data load+XLA wa
 GETBCS_BASE=60;     GETBCS_PER_LEAD=3       # get_bcs: per lead
 MAKEBCS_BASE=60;    MAKEBCS_PER_LEAD=41     # make_bcs: per lead
 FETCH_BASE=600;     FETCH_PER_LEAD=120      # fetch: HPSS htar is tape-bound (mount+seek/scan), not 5s/lead
-GENENS_BASE=120;    GENENS_PER_LEAD=200     # genensprod: per lead
-GRIDSTAT_BASE=120;  GRIDSTAT_PER_LEAD=200   # gridstat: per lead
+GENENS_BASE=120;    GENENS_PER_LEAD=600     # genensprod: per lead
+GRIDSTAT_BASE=120;  GRIDSTAT_PER_LEAD=300   # gridstat: per lead
 ENSSTAT_BASE=180;   ENSSTAT_PER_LEAD=180     # ensemblestat: per lead
 
 FCST_WALLTIME=$(secs_to_hms "$(est $FCST_BASE     $FCST_PER_STEP    $((MPT*LEADS)))")
