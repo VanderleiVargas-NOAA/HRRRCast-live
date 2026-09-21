@@ -46,6 +46,7 @@ RUN_ENSEMBLESTAT=${RUN_ENSEMBLESTAT:-YES}
 RUN_GENENSPROD=${RUN_GENENSPROD:-YES}
 RUN_GRIDSTAT=${RUN_GRIDSTAT:-YES}
 RUN_GRIDSTAT_APCP=${RUN_GRIDSTAT_APCP:-YES}   # probabilistic precip (APCP) vs CCPA
+RUN_MODE=${RUN_MODE:-YES}                     # object-based (MET MODE) member 0: REFC vs MRMS, APCP vs CCPA
 RUN_CLEAN_GENENSPROD=${RUN_CLEAN_GENENSPROD:-YES}
 RUN_CLEAN_PB2NC=${RUN_CLEAN_PB2NC:-YES}       # remove pb2nc point-obs after ensemblestat
 RUN_ARCHIVE=${RUN_ARCHIVE:-YES}               # copy selected init hours to ARCHIVE_DIR before cleanup
@@ -78,12 +79,13 @@ est() { awk -v b="$1" -v r="$2" -v u="$3" -v k="$SAFETY" 'BEGIN{ printf "%d", (b
 
 # rate constants in SECONDS
 FCST_BASE=420;      FCST_PER_STEP=35        # fcst: fixed model+data load+XLA warmup (~5min) + per (member * lead)
-GETBCS_BASE=60;     GETBCS_PER_LEAD=3       # get_bcs: per lead
+GETBCS_BASE=60;     GETBCS_PER_LEAD=20       # get_bcs: per lead
 MAKEBCS_BASE=60;    MAKEBCS_PER_LEAD=41     # make_bcs: per lead
 FETCH_BASE=600;     FETCH_PER_LEAD=120      # fetch: HPSS htar is tape-bound (mount+seek/scan), not 5s/lead
-GENENS_BASE=120;    GENENS_PER_LEAD=600     # genensprod: per lead
+GENENS_BASE=120;    GENENS_PER_LEAD=700     # genensprod: per lead
 GRIDSTAT_BASE=120;  GRIDSTAT_PER_LEAD=300   # gridstat: per lead
 ENSSTAT_BASE=180;   ENSSTAT_PER_LEAD=180     # ensemblestat: per lead
+MODE_BASE=180;      MODE_PER_LEAD=600       # mode: 5 field/thresh runs, each per lead (~2min/run/lead)
 
 FCST_WALLTIME=$(secs_to_hms "$(est $FCST_BASE     $FCST_PER_STEP    $((MPT*LEADS)))")
 GET_BCS_WALLTIME=$(secs_to_hms "$(est $GETBCS_BASE   $GETBCS_PER_LEAD  $LEADS)")
@@ -92,13 +94,14 @@ FETCH_WALLTIME=$(secs_to_hms "$(est $FETCH_BASE    $FETCH_PER_LEAD   $LEADS)")
 GENENSPROD_WALLTIME=$(secs_to_hms "$(est $GENENS_BASE  $GENENS_PER_LEAD  $LEADS)")
 GRIDSTAT_WALLTIME=$(secs_to_hms "$(est $GRIDSTAT_BASE $GRIDSTAT_PER_LEAD $LEADS)")
 ENSEMBLESTAT_WALLTIME=$(secs_to_hms "$(est $ENSSTAT_BASE $ENSSTAT_PER_LEAD $LEADS)")
+MODE_WALLTIME=$(secs_to_hms "$(est $MODE_BASE $MODE_PER_LEAD $LEADS)")
 
 # Cap the CPU/MET walltimes at the u1-compute limit (8:00:00); sbatch rejects any
 # longer request. fcst runs on u1-h100 (7-day limit) and the fetch jobs on
 # u1-service (1-day limit), so neither is capped here.
 CPU_MAX_SEC=$(( 8*3600 ))
 hms_to_secs() { local IFS=:; set -- $1; echo $(( 10#$1*3600 + 10#$2*60 + 10#$3 )); }
-for _w in GET_BCS MAKE_BCS GENENSPROD GRIDSTAT ENSEMBLESTAT; do
+for _w in GET_BCS MAKE_BCS GENENSPROD GRIDSTAT ENSEMBLESTAT MODE; do
     _v="${_w}_WALLTIME"
     if (( $(hms_to_secs "${!_v}") > CPU_MAX_SEC )); then
         printf -v "$_v" '%s' "$(secs_to_hms "$CPU_MAX_SEC")"
@@ -106,7 +109,7 @@ for _w in GET_BCS MAKE_BCS GENENSPROD GRIDSTAT ENSEMBLESTAT; do
 done
 
 # fixed / near-constant jobs
-GET_ICS_WALLTIME="00:10:00"
+GET_ICS_WALLTIME="01:00:00"
 MAKE_ICS_WALLTIME="00:10:00"
 EXPORT_WALLTIME="00:10:00"
 CLEAN_WALLTIME="00:10:00"
@@ -286,6 +289,14 @@ if on "$RUN_GRIDSTAT_APCP"; then
     echo "Submitted gridstat-apcp job: $jobidSA"
 fi
 
+# ---- object-based verification (MET MODE, raw member 0: REFC vs MRMS, APCP vs CCPA) ----
+# Reads the raw member GRIB2 (needs the forecast array) and the fetched MRMS/CCPA obs.
+if on "$RUN_MODE"; then
+    atparse < $PACKAGEROOT/jobs/job-mode-live.sh > $DATAROOT/logs/job-mode-live.sh
+    jobidM=$(submit_with_check sbatch $(dep_flag afterok "$jobid5" "$jobidF" "$jobidFC") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-mode-live.sh)
+    echo "Submitted mode job: $jobidM"
+fi
+
 if on "$RUN_CLEAN_GENENSPROD"; then
     atparse < $PACKAGEROOT/jobs/job-clean-genensprod.sh > $DATAROOT/logs/job-clean-genensprod.sh
     jobidGC=$(submit_with_check sbatch $(dep_flag afterok "$jobidS" "$jobidSA") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-genensprod.sh)
@@ -300,10 +311,10 @@ if on "$RUN_CLEAN_PB2NC"; then
 fi
 
 # ---- cleanup ----
-# remove the fetched obs once their consumers are done (gridstat: mrms/ccpa; pb2nc: ndas)
+# remove the fetched obs once their consumers are done (gridstat/mode: mrms/ccpa; pb2nc: ndas)
 if on "$RUN_CLEAN_OBS"; then
     atparse < $PACKAGEROOT/jobs/job-clean-obs.sh > $DATAROOT/logs/job-clean-obs.sh
-    jobidO=$(submit_with_check sbatch $(dep_flag afterok "$jobidS" "$jobidSA" "$jobidPB") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-obs.sh)
+    jobidO=$(submit_with_check sbatch $(dep_flag afterok "$jobidS" "$jobidSA" "$jobidM" "$jobidPB") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-obs.sh)
     echo "Submitted clean-obs job: $jobidO"
 fi
 
@@ -318,10 +329,10 @@ if on "$RUN_ARCHIVE"; then
 fi
 
 # remove the remaining HRRRCast members once every member-consumer is done
-# (genensprod, ensemblestat), export finished, and the archive copy is done
+# (genensprod, ensemblestat, mode), export finished, and the archive copy is done
 if on "$RUN_CLEAN_FCST"; then
     atparse < $PACKAGEROOT/jobs/job-clean-fcst.sh > $DATAROOT/logs/job-clean-fcst.sh
-    jobidP=$(submit_with_check sbatch $(dep_flag afterok "$jobidG" "$jobidES" "$jobid_export" "$jobidA") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-fcst.sh)
+    jobidP=$(submit_with_check sbatch $(dep_flag afterok "$jobidG" "$jobidES" "$jobidM" "$jobid_export" "$jobidA") --kill-on-invalid-dep=yes --parsable $DATAROOT/logs/job-clean-fcst.sh)
     echo "Submitted clean-fcst job: $jobidP"
 fi
 
@@ -333,7 +344,7 @@ JOBIDS_FILE="$DATAROOT/logs/pipeline_jobids_${INIT_STAMP}.txt"
 : > "$JOBIDS_FILE"
 for v in "$jobid1" "$jobid2" "$jobid3" "$jobid4" "$jobid5" "$jobid_export" "$jobid6" \
          "$jobidF" "$jobidFC" "$jobidFN" "$jobidPB" "$jobidES" \
-         "$jobidG" "$jobidS" "$jobidSA" "$jobidGC" "$jobidPBC" "$jobidO" "$jobidA" "$jobidP"; do
+         "$jobidG" "$jobidS" "$jobidSA" "$jobidM" "$jobidGC" "$jobidPBC" "$jobidO" "$jobidA" "$jobidP"; do
     [[ -n "$v" ]] && echo "$v" >> "$JOBIDS_FILE"
 done
 DEP_IDS=$(paste -sd: "$JOBIDS_FILE")
